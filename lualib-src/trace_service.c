@@ -13,12 +13,23 @@
 #include <mach/mach.h>
 #endif
 
-void 
-diff_time(struct timespec *ti, uint32_t *sec, uint32_t *nsec) {
+#if defined(_WIN32)
+#include <skynet_port_win32.h>
+#endif
+
+#if defined(_WIN32)
+void diff_time(struct timeval *ti, uint32_t *sec, uint32_t *nsec) {
+#else
+void diff_time(struct timespec *ti, uint32_t *sec, uint32_t *nsec) {
+#endif
+#if  defined(_WIN32)
+	struct timeval end;
+	clock_gettime(1, &end);
+#elif  !defined(__APPLE__)
 	struct timespec end;
-#if  !defined(__APPLE__)
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
 #else
+	struct timespec end;
 	struct task_thread_times_info aTaskInfo;
 	mach_msg_type_number_t aTaskInfoCount = TASK_THREAD_TIMES_INFO_COUNT;
 	assert(KERN_SUCCESS == task_info(mach_task_self(), TASK_THREAD_TIMES_INFO, (task_info_t )&aTaskInfo, &aTaskInfoCount));
@@ -27,7 +38,12 @@ diff_time(struct timespec *ti, uint32_t *sec, uint32_t *nsec) {
 #endif
 	int diffsec = end.tv_sec - ti->tv_sec;
 	assert(diffsec>=0);
+#if defined(_WIN32)
+	
+	int diffnsec = end.tv_usec - ti->tv_usec;
+	#else
 	int diffnsec = end.tv_nsec - ti->tv_nsec;
+#endif
 	if (diffnsec < 0) {
 		--diffsec;
 		diffnsec += NANOSEC;
@@ -44,7 +60,11 @@ struct trace_info {
 	int session;
 	struct trace_info * prev;
 	struct trace_info * next;
+#if defined(_WIN32)
+	struct timeval ti;
+#else
 	struct timespec ti;
+#endif
 	uint32_t ti_sec;
 	uint32_t ti_nsec;
 };
@@ -89,7 +109,9 @@ trace_new(struct trace_pool *p) {
 	t->next = NULL;
 	t->ti_sec = 0;
 	t->ti_nsec = 0;
-#if  !defined(__APPLE__)
+#if defined(_WIN32)
+	clock_gettime(1, &t->ti);
+#elif  !defined(__APPLE__)
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t->ti);
 #else
 	struct task_thread_times_info aTaskInfo;
@@ -151,7 +173,9 @@ trace_switch(struct trace_pool *p, int session) {
 			if (t->next) {
 				t->next->prev = prev;
 			}
-#if  !defined(__APPLE__)
+#if defined(_WIN32)
+			clock_gettime(1, &t->ti);
+#elif  !defined(__APPLE__)
 			clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t->ti);
 #else
 			struct task_thread_times_info aTaskInfo;

@@ -10,10 +10,11 @@
 #define HAVE_KQUEUE 1
 #endif
 
-#if !defined(HAVE_EPOLL) && !defined(HAVE_KQUEUE)
-#error "system does not support epoll or kqueue API"
+#if !defined(HAVE_EPOLL) && !defined(HAVE_KQUEUE) &&!defined(_WIN32)
+#error "system does not support epoll or kqueue API or iocp"
 #endif
 /* ! Test for polling API */
+
 
 #ifdef HAVE_EPOLL
 #include <sys/epoll.h>
@@ -22,11 +23,28 @@
 #endif
 
 #include <sys/types.h>
+#if defined(_WIN32)
+
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <mswsock.h>
+#include <winsock2.h>
+/* Mingw's headers don't define LPFN_ACCEPTEX. */
+#define WSAID_ACCEPTEX {0xb5367df1,0xcbac,0x11cf,{0x95,0xca,0x00,0x80,0x5f,0x48,0xa1,0x92}}
+typedef BOOL (WINAPI *LPFN_ACCEPTEX)(SOCKET, SOCKET, PVOID, DWORD, DWORD, DWORD, LPDWORD, LPOVERLAPPED);
+LPFN_ACCEPTEX lpfnAcceptEx = NULL;
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#endif
+
 #include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
@@ -47,8 +65,15 @@
 #define SOCKET_ALIVE	SOCKET_SUSPEND
 
 #define LISTENSOCKET (void *)((intptr_t)~0)
-
+static data[1024];
+static struct socket *
+_add_client(struct mread_pool * self, int fd) ;
 struct socket {
+	#if defined(WIN32)
+	OVERLAPPED ol;
+	WSABUF buffer;
+	char data[128];
+	#endif 
 	int fd;
 	struct ringbuffer_block * node;
 	struct ringbuffer_block * temp;
@@ -61,6 +86,10 @@ struct mread_pool {
 	int epoll_fd;
 #elif HAVE_KQUEUE
 	int kqueue_fd;
+#else
+	HANDLE iocp;
+	WSAEVENT           events[1]; 
+	struct socket * ev[0]; //
 #endif
 	int max_connection;
 	int closed;
@@ -111,12 +140,20 @@ _release_rb(struct ringbuffer * rb) {
 static int
 _set_nonblocking(int fd)
 {
+#if defined(_WIN32)
+	unsigned long flag=1;
+	int r = ioctlsocket(fd,FIONBIO,&flag); 
+	if (r!=0){ 
+    	  return -1; 
+	}
+	return r;
+#else
 	int flag = fcntl(fd, F_GETFL, 0);
 	if ( -1 == flag ) {
 		return -1;
 	}
-
 	return fcntl(fd, F_SETFL, flag | O_NONBLOCK);
+#endif
 }
 
 struct mread_pool *
@@ -145,6 +182,21 @@ mread_create(uint32_t addr, int port , int max , int buffer_size) {
 	if (listen(listen_fd, BACKLOG) == -1) {
 		close(listen_fd);
 		return NULL;
+	}
+
+	struct mread_pool * self = malloc(sizeof(*self));
+	self->max_connection = max;
+	self->closed = 0;
+	self->active = -1;
+	self->skip = 0;
+	self->sockets = _create_sockets(max);
+	self->free_socket = &self->sockets[0];
+	self->queue_len = 0;
+	self->queue_head = 0;
+	if (buffer_size == 0) {
+		self->rb = _create_rb(RINGBUFFER_DEFAULT);
+	} else {
+		self->rb = _create_rb(buffer_size);
 	}
 
 #ifdef HAVE_EPOLL
@@ -177,30 +229,49 @@ mread_create(uint32_t addr, int port , int max , int buffer_size) {
 		close(kqueue_fd);
 		return NULL;
 	}
+#elif defined(_WIN32)
+	HANDLE iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0,2);//todo fix 2
+	if(iocp == NULL){
+		printf("error:create iocp:%d \n",WSAGetLastError());
+		return NULL;
+	}
+	CreateIoCompletionPort((HANDLE)listen_fd,iocp,listen_fd, 0);
+	GUID guidAcceptEx = WSAID_ACCEPTEX;
+	DWORD dwBytes = 0;
+        if (!WSAIoctl(listen_fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
+        	&guidAcceptEx, sizeof(guidAcceptEx), &lpfnAcceptEx, sizeof(lpfnAcceptEx),
+        	&dwBytes, NULL, NULL) == 0)
+   	 {
+        	printf("WSAIoctl error:%d \n",WSAGetLastError());
+        	return NULL;
+    	}	
+
+	
+	int peer_socket = socket(AF_INET,SOCK_STREAM,0);
+	if(peer_socket== INVALID_SOCKET){
+        	printf("create socket  error:%d \n",WSAGetLastError());
+		return NULL;
+	}
+	struct socket * s2=_add_client(self,peer_socket);
+	BOOL bRet = lpfnAcceptEx(listen_fd,peer_socket,s2->data, 0,
+        	sizeof(SOCKADDR_IN)+16, sizeof(SOCKADDR_IN)+16, &dwBytes,
+       	 &(s2->ol));
+   	 if (bRet == FALSE)
+   	 {
+        	if (WSAGetLastError() != ERROR_IO_PENDING){
+        		printf("WSAIoctl error:%d \n",WSAGetLastError());
+			return NULL;
+		}
+    	}
 #endif
-
-	struct mread_pool * self = malloc(sizeof(*self));
-
 	self->listen_fd = listen_fd;
 #ifdef HAVE_EPOLL
 	self->epoll_fd = epoll_fd;
 #elif HAVE_KQUEUE
 	self->kqueue_fd = kqueue_fd;
+#elif defined(_WIN32)
+	self->iocp= iocp;
 #endif
-	self->max_connection = max;
-	self->closed = 0;
-	self->active = -1;
-	self->skip = 0;
-	self->sockets = _create_sockets(max);
-	self->free_socket = &self->sockets[0];
-	self->queue_len = 0;
-	self->queue_head = 0;
-	if (buffer_size == 0) {
-		self->rb = _create_rb(RINGBUFFER_DEFAULT);
-	} else {
-		self->rb = _create_rb(buffer_size);
-	}
-
 	return self;
 }
 
@@ -238,6 +309,58 @@ _read_queue(struct mread_pool * self, int timeout) {
 	timeoutspec.tv_sec = timeout / 1000;
 	timeoutspec.tv_nsec = (timeout % 1000) * 1000000;
 	int n = kevent(self->kqueue_fd, NULL, 0, self->ev, READQUEUE, &timeoutspec);
+#elif defined(WIN32)
+	 int                n,key,flags=0;
+    	 u_long             bytes=0;
+	 struct socket * _socket;
+	int rc = GetQueuedCompletionStatus(self->iocp, &bytes, (LPDWORD) &key,
+                                   (LPOVERLAPPED*)&_socket, (u_long) timeout);
+
+    	if (rc == 0) {
+		self->queue_len = 0;
+        	return -1;
+    	} 
+	if(key==self->listen_fd){//accept	
+		int peer_socket = socket(AF_INET,SOCK_STREAM,0);
+		if(peer_socket== INVALID_SOCKET){
+        	printf("create socket  error:%d \n",WSAGetLastError());
+		self->queue_len = 0;
+		return -1;
+		}
+		struct socket * s2=_add_client(self,peer_socket);
+		BOOL bRet = lpfnAcceptEx(self->listen_fd,peer_socket , s2->data, 0,
+        	sizeof(SOCKADDR_IN)+16, sizeof(SOCKADDR_IN)+16, &bytes,
+       		 &(s2->ol));
+   	 	if (bRet == FALSE)
+   		 {
+        		if (WSAGetLastError() != ERROR_IO_PENDING){
+        			printf("WSAIoctl error:%d \n",WSAGetLastError());
+				self->queue_len = 0;
+				return -1;
+			}
+    		}
+		if (setsockopt(_socket->fd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,  
+                (char*)&(self->listen_fd), sizeof(self->listen_fd)) == SOCKET_ERROR)
+            	{
+               		printf("set opt error:%d \n",WSAGetLastError());	
+			self->queue_len = 0;
+			return -1;
+            	}
+		//recv zero data for iocp	
+		CreateIoCompletionPort(_socket->fd,self->iocp,_socket->fd,0);
+		ZeroMemory(&(_socket->ol),sizeof(OVERLAPPED));
+    		if (WSARecv(_socket->fd, &(_socket->buffer),1, &bytes, &flags, &(_socket->ol), NULL) == SOCKET_ERROR)  
+   		{  
+   		DWORD error; 
+		error = GetLastError();
+		printf("GetLastError is : %d , recvBytes = %d \n",error,bytes);
+		}
+       		n=-1;	
+	}else{ //read
+		n=1;
+		self->ev[0]=_socket;
+	}
+        
 #endif
 	if (n == -1) {
 		self->queue_len = 0;
@@ -256,6 +379,8 @@ _read_one(struct mread_pool * self) {
 	return self->ev[self->queue_head ++].data.ptr;
 #elif HAVE_KQUEUE
 	return self->ev[self->queue_head ++].udata;
+#else
+	return self->ev[self->queue_head ++];
 #endif
 }
 
@@ -271,6 +396,10 @@ _alloc_socket(struct mread_pool * self) {
 	} else {
 		self->free_socket = &self->sockets[next_free];
 	}
+#if defined(_WIN32) //win32 zero overlap
+	ZeroMemory(&s->ol,sizeof(OVERLAPPED));
+        s->buffer.len=0; //zero data recv use iocp like epoll
+#endif 
 	return s;
 }
 
@@ -296,6 +425,7 @@ _add_client(struct mread_pool * self, int fd) {
 		close(fd);
 		return NULL;
 	}
+     
 #endif
 
 	s->fd = fd;
@@ -336,6 +466,49 @@ mread_poll(struct mread_pool * self , int timeout) {
 			return -1;
 		}
 	}
+/*
+#if defined(_WIN32)
+	for(;;){//accept socket
+		int n = WSAWaitForMultipleEvents(1, self->events,
+                                     0, timeout, 0);
+		WSANETWORKEVENTS  ne;
+		if (n == WAIT_FAILED) {     
+            	break;
+       		 }
+        	if (n == WAIT_TIMEOUT) {
+            	break;
+       		 }
+
+        	n -= WSA_WAIT_EVENT_0;
+		if (WSAEnumNetworkEvents(self->listen_fd, self->events[n], &ne) == -1) {
+            		break;
+       		 }
+	        if (ne.lNetworkEvents & FD_ACCEPT) {
+		   
+        	    SOCKET fd = accept(self->listen_fd, NULL, NULL);
+		    struct socket * s = _add_client(self, fd);
+		    if (CreateIoCompletionPort((HANDLE)fd,self->iocp,s, 0) == NULL) {
+        		 break;
+    		    }	 
+			if (CreateIoCompletionPort((HANDLE)fd,self->iocp,1, 0) == NULL) {
+			printf("add connection GetLastError is : %d  %d \n",GetLastError(),fd);
+        		break;
+       			 }
+        		DWORD   flags = 0;       
+    			DWORD   recvBytes =0;  
+        		ZeroMemory(&s->ol,sizeof(OVERLAPPED));
+    			if (WSARecv(fd, NULL,0, &recvBytes, &flags, &(s->ol), NULL) == SOCKET_ERROR)  
+   			{  
+   				DWORD error; 
+				error = GetLastError();
+				printf("GetLastError is : %d , recvBytes = %d \n",error,recvBytes);
+       		
+    			}		
+        	   continue;
+       		}
+	}
+#endif
+*/
 	for (;;) {
 		struct socket * s = _read_one(self);
 		if (s == NULL) {
@@ -466,7 +639,25 @@ mread_pull(struct mread_pool * self , int size) {
 	buffer = (char *)(blk + 1);
 
 	for (;;) {
+		#if defined(WIN32)
+ 		int flags=0;
+		int recv_bytes;
+		int bytes = recv(s->fd, buffer, rd, 0);
+		//recv zero data for iocp	
+		CreateIoCompletionPort(s->fd,self->iocp,s->fd,0);
+		ZeroMemory(&(s->ol),sizeof(OVERLAPPED));
+    		if (WSARecv(s->fd, &(s->buffer),1, &recv_bytes, &flags, &(s->ol), NULL) == SOCKET_ERROR)  
+   		{
+			if(GetLastError() !=WSA_IO_PENDING){  
+				ringbuffer_shrink(rb, blk, 0);
+				_close_active(self);
+				printf("GetLastError is : %d  \n",GetLastError());
+				return NULL;
+			}
+		}
+		#else
 		int bytes = recv(s->fd, buffer, rd, MSG_DONTWAIT);
+		#endif
 		if (bytes > 0) {
 			ringbuffer_shrink(rb, blk , bytes);
 			if (bytes < sz) {
@@ -482,6 +673,7 @@ mread_pull(struct mread_pool * self , int size) {
 			_close_active(self);
 			return NULL;
 		}
+		#if !defined(WIN32)
 		if (bytes == -1) {
 			switch(errno) {
 			case EWOULDBLOCK:
@@ -496,6 +688,13 @@ mread_pull(struct mread_pool * self , int size) {
 				return NULL;
 			}
 		}
+		#else
+		if(bytes == -1){
+			ringbuffer_shrink(rb, blk, 0);
+			_close_active(self);
+			return NULL;
+		}	
+		#endif
 	}
 	_link_node(rb, self->active , s , blk);
 	void * ret;

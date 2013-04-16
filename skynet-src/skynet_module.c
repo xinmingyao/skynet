@@ -2,7 +2,11 @@
 
 #include <assert.h>
 #include <string.h>
+#ifdef _WIN32
+#include "skynet_port_win32.h"
+#else
 #include <dlfcn.h>
+#endif
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -69,7 +73,6 @@ _open_sym(struct skynet_module *mod) {
 	mod->init = dlsym(mod->module, tmp);
 	strcpy(tmp+name_size, "_release");
 	mod->release = dlsym(mod->module, tmp);
-
 	return mod->init == NULL;
 }
 
@@ -89,8 +92,7 @@ skynet_module_query(const char * name) {
 		if (dl) {
 			M->m[index].name = name;
 			M->m[index].module = dl;
-
-			if (_open_sym(&M->m[index]) == 0) {
+			if (_open_sym(&M->m[index])== 0) {
 				M->m[index].name = strdup(name);
 				M->count ++;
 				result = &M->m[index];

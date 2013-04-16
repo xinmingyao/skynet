@@ -365,7 +365,9 @@ LUALIB_API void luaL_traceback (lua_State *L, lua_State *L1,
 /* }====================================================== */
 
 #else
-
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 LUALIB_API void 
 luaL_init(lua_State *L) {
 }

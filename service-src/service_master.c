@@ -2,8 +2,17 @@
 #include "skynet_harbor.h"
 
 #include <sys/types.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#endif
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +40,9 @@ struct master {
 	struct namemap map;
 };
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 struct master *
 master_create() {
 	struct master *m = malloc(sizeof(*m));
@@ -43,6 +55,9 @@ master_create() {
 	return m;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 void
 master_release(struct master * m) {
 	int i;
@@ -266,6 +281,9 @@ _mainloop(struct skynet_context * context, void * ud, int type, int session, uin
 	return 0;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 int
 master_init(struct master *m, struct skynet_context *ctx, const char * args) {
 	char tmp[strlen(args) + 32];

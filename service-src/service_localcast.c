@@ -17,6 +17,9 @@ _maincb(struct skynet_context * context, void * ud, int type, int session, uint3
 	return 0;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 localcast_init(void * ud, struct skynet_context *ctx, const char * args) {
 	skynet_callback(ctx, ud, _maincb);

@@ -94,15 +94,20 @@ main(int argc, char *argv[]) {
 		return 1;
 	} 
 	_init_env(L);
-
+#if defined (_WIN32)
+	_putenv("LUA_PATH=./lualib/?.lua;./lualib/?/init.lua");
+	_putenv("LUA_CPATH=./luaclib/?.dll");	
+	config.module_path = optstring("cpath","./service/?.dll");
+#else
 	const char *path = optstring("lua_path","./lualib/?.lua;./lualib/?/init.lua");
-	setenv("LUA_PATH",path,1);
 	const char *cpath = optstring("lua_cpath","./luaclib/?.so");
+	setenv("LUA_PATH",path,1);
 	setenv("LUA_CPATH",cpath,1);
+	config.module_path = optstring("cpath","./service/?.so");
+#endif
 	optstring("luaservice","./service/?.lua");
 
 	config.thread =  optint("thread",8);
-	config.module_path = optstring("cpath","./service/?.so");
 	config.logger = optstring("logger",NULL);
 	config.harbor = optint("harbor", 1);
 	config.master = optstring("master","127.0.0.1:2012");

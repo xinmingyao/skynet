@@ -11,7 +11,13 @@ struct skynet_config {
 	const char * start;
 	const char * standalone;
 };
+#if defined(_WIN32)
+#define SKYNET_API __declspec(dllexport)
+#else
+#define SKYNET_API 
+#endif
 
-void skynet_start(struct skynet_config * config);
+SKYNET_API void skynet_start(struct skynet_config * config);
 
+#undef SKYNET_API
 #endif

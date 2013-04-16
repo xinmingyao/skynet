@@ -2,9 +2,18 @@
 #include "skynet_harbor.h"
 
 #include <sys/types.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <sys/uio.h>
+#endif
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -196,6 +205,9 @@ _hash_delete(struct hashmap *hash) {
 
 ///////////////
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 struct harbor *
 harbor_create(void) {
 	struct harbor * h = malloc(sizeof(*h));
@@ -211,6 +223,9 @@ harbor_create(void) {
 	return h;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 void
 harbor_release(struct harbor *h) {
 	if (h->master_fd >= 0) {
@@ -273,6 +288,11 @@ _message_to_header(const uint32_t *message, struct remote_message_header *header
 static int
 _send_package(int fd, const void * buffer, size_t sz) {
 	uint32_t header = htonl(sz);
+#if defined(_WIN32)
+	send(fd,header,4,0);
+	send(fd,buffer,sz,0);
+	return 0;
+#else	
 	struct iovec part[2];
 	part[0].iov_base = &header;
 	part[0].iov_len = 4;
@@ -293,11 +313,20 @@ _send_package(int fd, const void * buffer, size_t sz) {
 		}
 		return 0;
 	}
+#endif
 }
 
 static int
 _send_remote(int fd, const char * buffer, size_t sz, struct remote_message_header * cookie) {
 	uint32_t sz_header = htonl(sz+sizeof(*cookie));
+#if defined(_WIN32)
+	send(fd,&sz_header,4,0);
+	send(fd,buffer,sz,0);
+	uint32_t header[3];
+	_header_to_message(cookie, header);
+	send(fd,header,sizeof(header),0);
+	return 0;
+#else
 	struct iovec part[3];
 
 	part[0].iov_base = &sz_header;
@@ -325,6 +354,7 @@ _send_remote(int fd, const char * buffer, size_t sz, struct remote_message_heade
 		}
 		return 0;
 	}
+#endif
 }
 
 static void
@@ -552,6 +582,9 @@ _mainloop(struct skynet_context * context, void * ud, int type, int session, uin
 	}
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 int
 harbor_init(struct harbor *h, struct skynet_context *ctx, const char * args) {
 	int sz = strlen(args)+1;

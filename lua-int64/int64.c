@@ -297,6 +297,9 @@ make_mt(lua_State *L) {
 	luaL_newlib(L,lib);
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 luaopen_int64(lua_State *L) {
 	if (sizeof(intptr_t)!=sizeof(int64_t)) {

@@ -1,9 +1,17 @@
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#else
 #include <pthread.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
+#endif
 #include <unistd.h>
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -17,7 +25,12 @@ struct args {
 static int
 readall(int fd, void * buffer, size_t sz) {
 	for (;;) {
+		#if defined(_WIN32)
+	
+		int err = recv(fd , buffer, sz, 0);
+		#else
 		int err = recv(fd , buffer, sz, MSG_WAITALL);
+		#endif
 		if (err < 0) {
 			if (errno == EAGAIN || errno == EINTR)
 				continue;
@@ -30,7 +43,7 @@ readall(int fd, void * buffer, size_t sz) {
 }
 
 static void *
-_read(void *ud) {
+__read(void *ud) {
 	struct args *p = ud;
 	int fd = p->fd;
 	fflush(stdout);
@@ -81,7 +94,10 @@ main(int argc, char * argv[]) {
 		printf("connect address port\n");
 		return 1;
 	}
-
+#if defined(WIN32)
+	WSADATA wsaData;  
+	WSAStartup(MAKEWORD(2,2), &wsaData);
+#endif
 	int fd = socket(AF_INET,SOCK_STREAM,0);
 	struct sockaddr_in my_addr;
 
@@ -97,13 +113,20 @@ main(int argc, char * argv[]) {
 	}
 
 	struct args arg = { fd };
+#if defined(WIN32)
+	HANDLE pid;
+	pid=CreateThread(NULL, 0, __read, &arg, 0, NULL);
+	HANDLE pid_stdin;
+	pid_stdin=CreateThread(NULL, 0, test, &arg, 0, NULL);
+	WaitForSingleObject(pid, INFINITE);
+#else
 	pthread_t pid ;
-	pthread_create(&pid, NULL, _read, &arg);
+	pthread_create(&pid, NULL, __read, &arg);
 	pthread_t pid_stdin;
 	pthread_create(&pid_stdin, NULL, test, &arg);
 
 	pthread_join(pid, NULL); 
-
+#endif
 	close(fd);
 
 	return 0;

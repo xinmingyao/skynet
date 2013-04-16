@@ -6,11 +6,17 @@
 #include <string.h>
 #include <stdio.h>
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 struct skynet_multicast_group *
 multicast_create() {
 	return skynet_multicast_newgroup();
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 void
 multicast_release(struct skynet_multicast_group *g) {
 	skynet_multicast_deletegroup(g);
@@ -50,6 +56,9 @@ _maincb(struct skynet_context * context, void * ud, int type, int session, uint3
 	}
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 int
 multicast_init(struct skynet_multicast_group *g, struct skynet_context *ctx, const char * args) {
 	skynet_callback(ctx, g, _maincb);

@@ -2,24 +2,10 @@
 #include "skynet.h"
 
 
-#include <sys/types.h>
-#include <sys/socket.h>
-
-#include <unistd.h>
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
 
 #define DEFAULT_BUFFER_SIZE 1024
 #define DEFAULT_CONNECTION 16
 
-struct connection {
-	int fd;
-	uint32_t address;
-	int close;
-};
 
 struct connection_server {
 	int max_connection;
@@ -29,6 +15,9 @@ struct connection_server {
 	struct connection * conn;
 };
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 struct connection_server *
 connection_create(void) {
 	struct connection_server * server = malloc(sizeof(*server));
@@ -36,6 +25,9 @@ connection_create(void) {
 	return server;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 void
 connection_release(struct connection_server * server) {
 	if (server->pool) {
@@ -115,8 +107,26 @@ _poll(struct connection_server * server) {
 		if (buffer == NULL) {
 			buffer = malloc(DEFAULT_BUFFER_SIZE);
 		}
-
+		#if defined(WIN32)
+		int flags=0;
+		int recv_bytes;
+		int size = recv(c->fd, buffer, DEFAULT_BUFFER_SIZE,0);
+		///////////
+		ZeroMemory(&c->ol,sizeof(OVERLAPPED));
+		c->buffer.len=0;//receive zero buffer
+		if (WSARecv(c->fd, &(c->buffer),1, &recv_bytes, &flags, &(c->ol), NULL) == SOCKET_ERROR)  
+   		{  if(GetLastError() !=WSA_IO_PENDING)
+			{  
+			DWORD error; 
+			error = GetLastError();
+			printf("GetLastError is : %d , recvBytes = %d %d \n",error,recv_bytes,c->fd);
+			skynet_send(server->ctx, 0, c->address, PTYPE_CLIENT | PTYPE_TAG_DONTCOPY, 0, NULL, 0);
+			connection_del(server->pool, c->fd);
+			}
+		}
+		#else
 		int size = read(c->fd, buffer, DEFAULT_BUFFER_SIZE);
+		#endif
 		if (size < 0) {
 			continue;
 		}
@@ -179,6 +189,9 @@ _connection_main(struct skynet_context * ctx, void * ud, int type, int session, 
 	return 0;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 connection_init(struct connection_server * server, struct skynet_context * ctx, char * param) {
 	server->pool = connection_newpool(DEFAULT_CONNECTION);

@@ -42,5 +42,20 @@ skynet.start(function()
 			print("Launch error:",cmd)
 		end
 	end)
-	socket.stdin()
+	if getos() ~= "win32" then
+		socket.stdin()
+	else
+		socket.start_console()
+	end
 end)
+function getos()
+        -- Unix, Linux varients
+        fh,err = io.popen("uname -o 2>/dev/null","r")
+        if fh then
+                osname = fh:read()
+                end
+        if osname then return osname end
+
+        -- Add code for other operating systems here
+        return "win32"
+end

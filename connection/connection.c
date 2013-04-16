@@ -14,8 +14,8 @@
 #define HAVE_KQUEUE 1
 #endif
 
-#if !defined(HAVE_EPOLL) && !defined(HAVE_KQUEUE)
-#error "system does not support epoll or kqueue API"
+#if !defined(HAVE_EPOLL) && !defined(HAVE_KQUEUE) &&!defined(_WIN32)
+#error "system does not support epoll or kqueue API or iocp"
 #endif
 /* ! Test for polling API */
 
@@ -25,6 +25,14 @@
 #include <sys/event.h>
 #endif
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#endif
 #define EPOLLQUEUE 32
 
 struct connection_pool {
@@ -32,6 +40,9 @@ struct connection_pool {
 	int epoll_fd;
 #elif HAVE_KQUEUE
 	int kqueue_fd;
+#else 
+	HANDLE iocp;	
+	WSAEVENT           events[1]; 
 #endif
 	int queue_len;
 	int queue_head;
@@ -39,6 +50,9 @@ struct connection_pool {
 	struct epoll_event ev[EPOLLQUEUE];
 #elif HAVE_KQUEUE
 	struct kevent ev[EPOLLQUEUE];
+#else
+	struct connection * ev[0];
+	
 #endif
 };
 
@@ -54,6 +68,12 @@ connection_newpool(int max) {
 	if (kqueue_fd == -1) {
 		return NULL;
 	}
+#else
+	HANDLE iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0,0);//todo fix 
+	if(iocp == NULL){
+		return NULL;
+	}
+	
 #endif
 
 	struct connection_pool * pool = malloc(sizeof(*pool));
@@ -61,6 +81,8 @@ connection_newpool(int max) {
 	pool->epoll_fd = epoll_fd;
 #elif HAVE_KQUEUE
 	pool->kqueue_fd = kqueue_fd;
+#else
+   pool->iocp=iocp;
 #endif
 	pool->queue_len = 0;
 	pool->queue_head = 0;
@@ -74,6 +96,8 @@ connection_deletepool(struct connection_pool * pool) {
 	close(pool->epoll_fd);
 #elif HAVE_KQUEUE
 	close(pool->kqueue_fd);
+#else
+	CloseHandle(pool->iocp);
 #endif
 	free(pool);
 }
@@ -94,6 +118,28 @@ connection_add(struct connection_pool * pool, int fd, void *ud) {
 	if (kevent(pool->kqueue_fd, &ke, 1, NULL, 0, NULL) == -1) {
 		return 1;
 	}
+#else
+
+	if (CreateIoCompletionPort((HANDLE)fd,pool->iocp,0, 0) == NULL) {
+		printf("add connection GetLastError is : %d  %d  %d\n",GetLastError(),fd,pool->iocp);
+		return 1;
+	}
+	struct connection *conn=(struct connection *)ud;
+	DWORD   flags = 0;       
+	DWORD   recvBytes =0;  
+	ZeroMemory(&conn->ol,sizeof(OVERLAPPED));
+	conn->buffer.len=0;//receive zero buffer
+	if (WSARecv(conn->fd, &(conn->buffer),1, &recvBytes, &flags, &(conn->ol), NULL) == SOCKET_ERROR)  
+   		{  
+			if(GetLastError() !=WSA_IO_PENDING){  
+			DWORD error; 
+			error = GetLastError();
+			printf("connection GetLastError is : %d , recvBytes = %d \n",error,recvBytes);
+			return 1;
+			}
+		}
+
+
 #endif
 	return 0;
 }
@@ -120,6 +166,18 @@ _read_queue(struct connection_pool * pool, int timeout) {
 	timeoutspec.tv_sec = timeout / 1000;
 	timeoutspec.tv_nsec = (timeout % 1000) * 1000000;
 	int n = kevent(pool->kqueue_fd, NULL, 0, pool->ev, EPOLLQUEUE, &timeoutspec);
+#elif defined(WIN32)
+	 int              key;
+	 u_long             bytes;
+	 struct connection * ev ;
+	 int rc = GetQueuedCompletionStatus(pool->iocp, &bytes, (LPDWORD) &key,
+                                    (LPOVERLAPPED *)&ev, (u_long) timeout);
+	if (rc == 0) {
+		pool->queue_len = 0;
+		return -1;
+	} 
+	int n=1;
+	pool->ev[0]=ev;
 #endif
 	if (n == -1) {
 		pool->queue_len = 0;
@@ -140,6 +198,8 @@ connection_poll(struct connection_pool * pool, int timeout) {
 	return pool->ev[pool->queue_head ++].data.ptr;
 #elif HAVE_KQUEUE
 	return pool->ev[pool->queue_head ++].udata;
+#else
+	return (void *)pool->ev[pool->queue_head ++];
 #endif
 }
 

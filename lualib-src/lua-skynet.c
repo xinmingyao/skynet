@@ -20,6 +20,9 @@
 #include <mach/mach.h>
 #endif
 
+#if defined(_WIN32)
+#include <skynet_port_win32.h>
+#endif
 struct stat {
 	lua_State *L;
 	int count;
@@ -30,9 +33,15 @@ struct stat {
 };
 
 static void
+#if defined(_WIN32)
+_stat_begin(struct stat *S, struct timeval *ti) {
+#else
 _stat_begin(struct stat *S, struct timespec *ti) {
+#endif
 	S->count++;
-#if !defined(__APPLE__)
+#if  defined(_WIN32)
+	clock_gettime(1, ti);
+#elif  !defined(__APPLE__)
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, ti);
 #else
 	struct task_thread_times_info aTaskInfo;
@@ -44,7 +53,11 @@ _stat_begin(struct stat *S, struct timespec *ti) {
 }
 
 inline static void
+#if defined(_WIN32)
+_stat_end(struct stat *S, struct timeval *ti) {
+#else
 _stat_end(struct stat *S, struct timespec *ti) {
+#endif
 	diff_time(ti, &S->ti_sec, &S->ti_nsec);
 }
 
@@ -76,7 +89,11 @@ static int
 _cb(struct skynet_context * context, void * ud, int type, int session, uint32_t source, const void * msg, size_t sz) {
 	struct stat *S = ud;
 	lua_State *L = S->L;
+#if defined(_WIN32)
+	struct timeval ti;
+#else
 	struct timespec ti;
+#endif
 	_stat_begin(S, &ti);
 	int trace = 1;
 	int top = lua_gettop(L);
@@ -446,6 +463,9 @@ _reload(lua_State *L) {
 // define in lua-remoteobj.c
 int remoteobj_init(lua_State *L);
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 luaopen_skynet_c(lua_State *L) {
 	luaL_checkversion(L);

@@ -10,7 +10,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-
+#ifdef _WIN32
+#include "skynet_port_win32.h"
+#endif
 static int
 _try_load(lua_State *L, const char * path, int pathlen, const char * name) {
 	int namelen = strlen(name);
@@ -116,6 +118,9 @@ _report_error(lua_State *L, struct skynet_context *ctx, const char *filename, in
 	lua_pop(L,1);
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
 	lua_State *L = l->L;
@@ -164,6 +169,9 @@ snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
 	return 1;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 struct snlua *
 snlua_create(void) {
 	struct snlua * l = malloc(sizeof(*l));
@@ -172,7 +180,9 @@ snlua_create(void) {
 	l->init = snlua_init;
 	return l;
 }
-
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 void
 snlua_release(struct snlua *l) {
 	lua_close(l->L);

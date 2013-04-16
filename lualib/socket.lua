@@ -34,6 +34,11 @@ function socket.stdin()
 	object = c.new()
 end
 
+function socket.start_console()
+	c.startconsole(skynet.address(skynet.self()))
+	object = c.new()
+end
+
 function socket.push(msg,sz)
 	if msg then
 		c.push(object, msg, sz)

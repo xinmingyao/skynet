@@ -51,6 +51,9 @@ _pack_message(lua_State *L) {
 	return 2;
 };
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 luaopen_mcast_c(lua_State *L) {
 	luaL_checkversion(L);

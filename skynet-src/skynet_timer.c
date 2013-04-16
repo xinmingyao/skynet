@@ -13,6 +13,9 @@
 #include <sys/time.h>
 #endif
 
+#if defined(_WIN32)
+#include <skynet_port_win32.h>
+#endif
 typedef void (*timer_execute_func)(void *ud,void *arg);
 
 #define TIME_NEAR_SHIFT 8
@@ -38,7 +41,7 @@ struct link_list {
 };
 
 struct timer {
-	struct link_list near[TIME_NEAR];
+	struct link_list near1[TIME_NEAR];
 	struct link_list t[4][TIME_LEVEL-1];
 	int lock;
 	int time;
@@ -73,7 +76,7 @@ add_node(struct timer *T,struct timer_node *node)
 	int current_time=T->time;
 	
 	if ((time|TIME_NEAR_MASK)==(current_time|TIME_NEAR_MASK)) {
-		link(&T->near[time&TIME_NEAR_MASK],node);
+		link(&T->near1[time&TIME_NEAR_MASK],node);
 	}
 	else {
 		int i;
@@ -110,8 +113,8 @@ timer_execute(struct timer *T)
 	struct timer_node *current;
 	int mask,i,time;
 	
-	while (T->near[idx].head.next) {
-		current=link_clear(&T->near[idx]);
+	while (T->near1[idx].head.next) {
+		current=link_clear(&T->near1[idx]);
 		
 		do {
 			struct timer_event * event = (struct timer_event *)(current+1);
@@ -163,7 +166,7 @@ timer_create_timer()
 	int i,j;
 
 	for (i=0;i<TIME_NEAR;i++) {
-		link_clear(&r->near[i]);
+		link_clear(&r->near1[i]);
 	}
 
 	for (i=0;i<4;i++) {
@@ -203,16 +206,21 @@ skynet_timeout(uint32_t handle, int time, int session) {
 static uint32_t
 _gettime(void) {
 	uint32_t t;
-#if !defined(__APPLE__)
-	struct timespec ti;
-	clock_gettime(CLOCK_MONOTONIC, &ti);
-	t = (uint32_t)(ti.tv_sec & 0xffffff) * 100;
-	t += ti.tv_nsec / 10000000;
-#else
+#if defined(__APPLE__) 
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	t = (uint32_t)(tv.tv_sec & 0xffffff) * 100;
 	t += tv.tv_usec / 10000;
+#elif defined(_WIN32)
+	struct timeval tv;
+	clock_gettime(1, &tv);
+	t = (uint32_t)(tv.tv_sec & 0xffffff) * 100;
+	t += tv.tv_usec / 10000;
+#else
+	struct timespec ti;
+	clock_gettime(CLOCK_MONOTONIC, &ti);
+	t = (uint32_t)(ti.tv_sec & 0xffffff) * 100;
+	t += ti.tv_nsec / 10000000;
 #endif
 	return t;
 }
@@ -239,21 +247,25 @@ uint32_t
 skynet_gettime(void) {
 	return TI->current;
 }
-
 void 
 skynet_timer_init(void) {
 	TI = timer_create_timer();
 	TI->current = _gettime();
 
-#if !defined(__APPLE__)
-	struct timespec ti;
-	clock_gettime(CLOCK_REALTIME, &ti);
-	uint32_t sec = (uint32_t)ti.tv_sec;
-#else
+#if defined(__APPLE)
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	uint32_t sec = (uint32_t)tv.tv_sec;
+#elif defined(_WIN32)
+	struct timeval tv;
+	clock_gettime(1, &tv);
+	uint32_t sec = (uint32_t)tv.tv_sec;
+#else
+	struct timespec ti;
+	clock_gettime(CLOCK_REALTIME, &ti);
+	uint32_t sec = (uint32_t)ti.tv_sec;
 #endif
+
 	uint32_t mono = _gettime() / 100;
 
 	TI->starttime = sec - mono;

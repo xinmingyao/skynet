@@ -7,7 +7,9 @@ _cb(struct skynet_context * context, void * ud, int type, int session, uint32_t 
 	skynet_forward(context, dest);
 	return 0;
 }
-
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 int
 tunnel_init(void * dummy, struct skynet_context *ctx, const char * args) {
 	uint32_t dest = skynet_queryname(ctx, args);

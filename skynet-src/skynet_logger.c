@@ -9,6 +9,9 @@ struct logger {
 	int close;
 };
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 struct logger *
 logger_create(void) {
 	struct logger * inst = malloc(sizeof(*inst));
@@ -17,6 +20,9 @@ logger_create(void) {
 	return inst;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 void
 logger_release(struct logger * inst) {
 	if (inst->close) {
@@ -35,6 +41,9 @@ _logger(struct skynet_context * context, void *ud, int type, int session, uint32
 	return 0;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 int
 logger_init(struct logger * inst, struct skynet_context *ctx, const char * parm) {
 	if (parm) {

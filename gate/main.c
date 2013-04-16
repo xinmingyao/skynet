@@ -1,7 +1,12 @@
 #include "skynet.h"
 #include "mread.h"
-
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#else
 #include <arpa/inet.h>
+#endif
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +34,9 @@ struct gate {
 	struct connection ** agent;
 	struct connection * map;
 };
-
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
 struct gate *
 gate_create(void) {
 	struct gate * g = malloc(sizeof(*g));
@@ -236,6 +243,9 @@ _break:
 	return 0;
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 gate_init(struct gate *g , struct skynet_context * ctx, char * parm) {
 	int port = 0;

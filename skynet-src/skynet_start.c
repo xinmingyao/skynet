@@ -8,8 +8,12 @@
 #include "skynet_harbor.h"
 #include "skynet_group.h"
 #include "skynet_monitor.h"
-
+#ifdef _WIN32
+#include <windows.h>
+#include "skynet_port_win32.h"
+#else
 #include <pthread.h>
+#endif
 #include <unistd.h>
 #include <assert.h>
 #include <stdio.h>
@@ -32,7 +36,11 @@ _monitor(void *p) {
 			skynet_monitor_check(m->m[i]);
 		}
 		CHECK_ABORT
+		#ifdef _WIN32
+		Sleep(5);
+		#else
 		sleep(5);
+		#endif
 	}
 	for (i=0;i<n;i++) {
 		skynet_monitor_delete(m->m[i]);
@@ -67,16 +75,27 @@ _worker(void *p) {
 
 static void
 _start(int thread) {
-	pthread_t pid[thread+2];
-
-	struct monitor *m = malloc(sizeof(*m));
+        struct monitor *m = malloc(sizeof(*m));
 	m->count = thread;
 	m->m = malloc(thread * sizeof(struct skynet_monitor *));
 	int i;
 	for (i=0;i<thread;i++) {
 		m->m[i] = skynet_monitor_new();
 	}
+#if defined(_WIN32)
+	HANDLE pid[thread+2];
+	pid[0]=CreateThread(NULL, 0, _monitor, m, 0, NULL);
+	pid[1]=CreateThread(NULL, 0, _timer, NULL, 0, NULL);
 
+	for (i=0;i<thread;i++) {
+		pid[i+2]=CreateThread(NULL, 0, _worker, m->m[i], 0, NULL);
+	}
+	for (i=1;i<thread+2;i++) {
+		 WaitForSingleObject(pid[i], INFINITE);
+	}
+	 
+#else
+	pthread_t pid[thread+2];
 	pthread_create(&pid[0], NULL, _monitor, m);
 	pthread_create(&pid[1], NULL, _timer, NULL);
 
@@ -87,6 +106,7 @@ _start(int thread) {
 	for (i=1;i<thread+2;i++) {
 		pthread_join(pid[i], NULL); 
 	}
+#endif
 }
 
 static int
@@ -99,6 +119,11 @@ _start_master(const char * master) {
 
 void 
 skynet_start(struct skynet_config * config) {
+#if defined(WIN32)
+	if(os_init()!=0){
+		fprintf(stderr,"init win32 error\n");
+	}
+#endif
 	skynet_group_init();
 	skynet_harbor_init(config->harbor);
 	skynet_handle_init(config->harbor);

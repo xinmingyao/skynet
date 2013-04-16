@@ -1,6 +1,14 @@
 #include "skynet.h"
-
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#else
 #include <sys/uio.h>
+#endif
 #include <errno.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -12,7 +20,13 @@ static int
 _cb(struct skynet_context * context, void * ud, int type, int session, uint32_t source, const void * msg, size_t sz) {
 	assert(sz <= 65535);
 	int fd = (int)(intptr_t)ud;
-
+	#if defined(WIN32)
+	//todo fixme,use iocp WSASend
+	uint8_t head[2] = { sz >> 8 & 0xff , sz & 0xff };
+	send(fd,head,2,0);
+	send(fd,msg,sz,0);
+	return 0;
+	#else
 	struct iovec buffer[2];
 	// send big-endian header
 	uint8_t head[2] = { sz >> 8 & 0xff , sz & 0xff };
@@ -37,8 +51,12 @@ _cb(struct skynet_context * context, void * ud, int type, int session, uint32_t 
 		assert(err == sz +2);
 		return 0;
 	}
+	#endif
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 client_init(void * dummy, struct skynet_context *ctx, const char * args) {
 	int fd = strtol(args, NULL, 10);

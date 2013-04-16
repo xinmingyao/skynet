@@ -1,6 +1,6 @@
 local skynet = require "skynet"
 local socket = require "socket"
-local int64 = require "int64"
+--local int64 = require "int64"
 local string = string
 local table = table
 local tonumber = tonumber
@@ -18,7 +18,8 @@ local function compose_message(msg)
 		if t == "number" then
 			v = tostring(v)
 		elseif t == "userdata" then
-			v = int64.tostring(int64.new(v),10)
+			v = tostring(v)
+			--v = int64.tostring(int64.new(v),10)
 		end
 		table.insert(lines,"$"..#v)
 		table.insert(lines,v)
@@ -170,6 +171,7 @@ local function split_package()
 end
 
 local function init()
+
 	while socket.connect(redis_server) do
 		skynet.sleep(1000)
 	end
@@ -205,6 +207,7 @@ skynet.register_protocol {
 }
 
 skynet.start(function()
+
 	skynet.dispatch("text", function(session, address, mode)
 		local last = batch_mode[address]
 		if mode == "end" then

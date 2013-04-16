@@ -7,18 +7,102 @@
 #include <string.h>
 #include <assert.h>
 
-#include <sys/uio.h>
-#include <sys/types.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "wsock32.lib")
+#pragma comment(lib,"winsock.lib")
+#pragma comment(lib,"ws2_32.lib")
+#include <winsock2.h>
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <sys/uio.h>
+#include <sys/types.h>
+#endif
 #include <errno.h>
 #include <unistd.h>
 
 #include <lua.h>
 #include <lauxlib.h>
 
+#if defined(_WIN32)
+//for win32 noblocking console
+#include "skynet_server.h"
+#include "skynet_mq.h"
+#include "skynet_handle.h"
+
+struct win_console{
+	uint32_t address;
+};
+
+static void *
+__console(void *ud) {
+	struct win_console *console = ud;
+	char tmp[1024];
+	while (!feof(stdin)) {
+		
+		fgets(tmp,sizeof(tmp),stdin);
+		if(console->address==0){
+			continue;
+		}
+		int sz = strlen(tmp);
+	
+		int type = sz >> HANDLE_REMOTE_SHIFT;
+		 struct skynet_message message;
+         message.source = 0;
+         message.session = 0;
+         message.data = malloc(sz);
+         memcpy(message.data, tmp, sz);
+         message.sz = sz  | (type << HANDLE_REMOTE_SHIFT);
+        skynet_context_push(console->address,&message);
+       
+
+	}
+	return NULL;
+}
+static void 
+__start_console(lua_State *L){
+	
+	const char * addr= luaL_checkstring(L,1);
+	uint32_t address = strtoul(addr+1, NULL, 16);
+	if (address == 0) {
+			lua_pushinteger(L,-1);
+			return 1;
+	}
+	HANDLE pid_stdin;
+	struct win_console * console;
+	console = malloc(sizeof(struct win_console));
+	console->address=address;
+	pid_stdin=CreateThread(NULL, 0, __console, console, 0, NULL);
+	lua_pushinteger(L,0);
+	return 1;
+}
+
 static int
-_open(lua_State *L) {
+__open(lua_State *L) {
+	const char * ip = luaL_checkstring(L,1);
+	int port = luaL_checkinteger(L,2);
+	struct sockaddr_in my_addr;
+	memset(&my_addr, 0, sizeof(struct sockaddr_in));
+	my_addr.sin_family = AF_INET;
+	my_addr.sin_port = htons(port);
+	my_addr.sin_addr.s_addr=inet_addr(ip);
+
+	SOCKET fd  = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED); 
+	if (fd == INVALID_SOCKET){
+        return 0;
+	}
+	
+	if (WSAConnect(fd, (struct sockaddr *)(&my_addr), sizeof(struct sockaddr_in), NULL, NULL, NULL, NULL) == SOCKET_ERROR)
+        return 0;
+	
+	lua_pushinteger(L,fd);
+	return 1;
+}
+#else
+static int
+__open(lua_State *L) {
 	const char * ip = luaL_checkstring(L,1);
 	int port = luaL_checkinteger(L,2);
 
@@ -39,6 +123,8 @@ _open(lua_State *L) {
 	lua_pushinteger(L,fd);
 	return 1;
 }
+#endif
+
 
 static int
 _blockwrite(int fd, const char * buffer, size_t sz) {
@@ -54,13 +140,17 @@ _blockwrite(int fd, const char * buffer, size_t sz) {
 		}
 		sz -= bytes;
 		buffer += bytes;
+#if defined(WIN32)
+		Sleep(0);
+#else
 		sleep(0);
+#endif
 	}
 	return 0;
 }
 
 static int
-_write(lua_State *L) {
+__write(lua_State *L) {
 	int fd = -1;
 	if (!lua_isnil(L,1)) {
 		fd = luaL_checkinteger(L,1);
@@ -221,7 +311,7 @@ _push(lua_State *L) {
 }
 
 static int
-_read(lua_State *L) {
+__read(lua_State *L) {
 	luaL_checktype(L,1,LUA_TUSERDATA);
 	struct buffer * buffer = lua_touserdata(L,1);
 	int need = luaL_checkinteger(L,2);
@@ -302,17 +392,23 @@ _readblock(lua_State *L) {
 	}
 }
 
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif  
 int
 luaopen_socket_c(lua_State *L) {
 	luaL_Reg l[] = {
-		{ "open", _open },
-		{ "write", _write },
+		{ "open", __open },
+		{ "write", __write },
 		{ "new", _new },
 		{ "push", _push },
-		{ "read", _read },
+		{ "read", __read },
 		{ "readline", _readline },
 		{ "readblock", _readblock },
 		{ "writeblock", _writeblock },
+		#if defined(_WIN32)
+		{ "startconsole", __start_console },
+		#endif
 		{ NULL, NULL },
 	};
 	luaL_checkversion(L);
