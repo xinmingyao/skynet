@@ -37,7 +37,7 @@ _monitor(void *p) {
 		}
 		CHECK_ABORT
 		#ifdef _WIN32
-		Sleep(5);
+		Sleep(5000);
 		#else
 		sleep(5);
 		#endif
