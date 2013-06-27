@@ -31,7 +31,9 @@ all : \
   luaclib/socketbuffer.so \
   luaclib/int64.so \
   luaclib/mcast.so \
-  client
+  client \
+  luaclib/binlib.so \
+  service/tcpserver.so 
 
 skynet : \
   skynet-src/skynet_main.c \
@@ -98,6 +100,10 @@ luaclib/mcast.so : lualib-src/lua-localcast.c | luaclib
 client : client-src/client.c
 	gcc $(CFLAGS) $^ -o $@ -lpthread
 
+service/tcpserver.so : tcpserver/tcpserver.c
+	gcc $(CFLAGS) $(SHARED) $^ -o $@ -Iskynet-src -Iservice-src
+luaclib/binlib.so : tcpserver/skynet_binlib.c | luaclib
+		gcc $(CFLAGS) $(SHARED) -Iluacompat -O2 $^ -o $@ 
 clean :
 	rm skynet client service/*.so luaclib/*.so
 	
