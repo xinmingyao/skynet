@@ -22,7 +22,7 @@ JEMALLOC_STATICLIB := 3rd/jemalloc/lib/libjemalloc_pic.a
 JEMALLOC_INC := 3rd/jemalloc/include/jemalloc
 
 all : jemalloc
-	
+
 .PHONY : jemalloc
 
 MALLOC_STATICLIB := $(JEMALLOC_STATICLIB)
@@ -43,12 +43,12 @@ jemalloc : $(MALLOC_STATICLIB)
 CSERVICE = snlua logger gate master harbor dummy
 LUA_CLIB = skynet socketdriver int64 bson mongo md5 netpack \
   cjson clientsocket memory profile multicast \
-  cluster
+  cluster base64
 
 SKYNET_SRC = skynet_main.c skynet_handle.c skynet_module.c skynet_mq.c \
   skynet_server.c skynet_start.c skynet_timer.c skynet_error.c \
   skynet_harbor.c skynet_env.c skynet_monitor.c skynet_socket.c socket_server.c \
-  malloc_hook.c skynet_daemon.c
+  malloc_hook.c skynet_daemon.c 
 
 all : \
   $(SKYNET_BUILD_PATH)/skynet \
@@ -109,7 +109,8 @@ $(LUA_CLIB_PATH)/multicast.so : lualib-src/lua-multicast.c | $(LUA_CLIB_PATH)
 
 $(LUA_CLIB_PATH)/cluster.so : lualib-src/lua-cluster.c | $(LUA_CLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src $^ -o $@ 
-
+$(LUA_CLIB_PATH)/base64.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/lbase64 && $(MAKE) LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/lbase64/base64.so $@
 clean :
 	rm -f $(SKYNET_BUILD_PATH)/skynet $(CSERVICE_PATH)/*.so $(LUA_CLIB_PATH)/*.so
 
