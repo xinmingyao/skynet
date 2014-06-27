@@ -12,7 +12,7 @@
 	url = https://github.com/cisco/libsrtp
 [submodule "3rd/base64"]
 	path = 3rd/base64
-	url = https://github.com/cisco/libsrtp
+	url = https://github.com/xinmingyao/lbase64
 [submodule "3rd/lua_srtp"]	
 	path = 3rd/lua_srtp
 	url = https://github.com/xinmingyao/lua_srtp
