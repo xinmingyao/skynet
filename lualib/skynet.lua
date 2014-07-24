@@ -22,7 +22,7 @@ local skynet = {
 	PTYPE_HARBOR = 5,
 	PTYPE_SOCKET = 6,
 	PTYPE_ERROR = 7,
-	PTYPE_QUEUE = 8,
+	PTYPE_QUEUE = 8,	-- use in deprecated mqueue, use skynet.queue instead
 	PTYPE_DEBUG = 9,
 	PTYPE_LUA = 10,
 	PTYPE_SNAX = 11,
@@ -190,12 +190,33 @@ function skynet.wait()
 	session_id_coroutine[session] = nil
 end
 
+local function globalname(name, handle)
+	local c = string.sub(name,1,1)
+	assert(c ~= ':')
+	if c == '.' then
+		return false
+	end
+
+	assert(#name <= 16)	-- GLOBALNAME_LENGTH is 16, defined in skynet_harbor.h
+	assert(tonumber(name) == nil)	-- global name can't be number
+
+	local harbor = require "skynet.harbor"
+
+	harbor.globalname(name, handle)
+
+	return true
+end
+
 function skynet.register(name)
-	c.command("REG", name)
+	if not globalname(name) then
+		c.command("REG", name)
+	end
 end
 
 function skynet.name(name, handle)
-	c.command("NAME", name .. " " .. skynet.address(handle))
+	if not globalname(name, handle) then
+		c.command("NAME", name .. " " .. skynet.address(handle))
+	end
 end
 
 local self_handle
@@ -208,7 +229,10 @@ function skynet.self()
 end
 
 function skynet.localname(name)
-	return string_to_handle(c.command("QUERY", name))
+	local addr = c.command("QUERY", name)
+	if addr then
+		return string_to_handle(addr)
+	end
 end
 
 function skynet.launch(...)
@@ -226,8 +250,19 @@ function skynet.starttime()
 	return tonumber(c.command("STARTTIME"))
 end
 
+function skynet.time()
+	return skynet.now()/100 + skynet.starttime()	-- get now first would be better
+end
+
 function skynet.exit()
 	skynet.send(".launcher","lua","REMOVE",skynet.self())
+	for co, session in pairs(session_coroutine_id) do
+		local address = session_coroutine_address[co]
+		local self = skynet.self()
+		if session~=0 and address then
+			skynet.redirect(address, self, "error", session, "")
+		end
+	end
 	c.command("EXIT")
 end
 
@@ -267,6 +302,7 @@ skynet.redirect = function(dest,source,typename,...)
 end
 
 skynet.pack = assert(c.pack)
+skynet.packstring = assert(c.packstring)
 skynet.unpack = assert(c.unpack)
 skynet.tostring = assert(c.tostring)
 
@@ -292,6 +328,9 @@ end
 
 function skynet.rawcall(addr, typename, msg, sz)
 	local p = proto[typename]
+	if watching_service[addr] == false then
+		error("Service is dead")
+	end
 	local session = assert(c.send(addr, p.id , nil , msg, sz), "call to invalid address")
 	return yield_call(addr, session)
 end
@@ -318,8 +357,8 @@ function skynet.dispatch(typename, func)
 	p.dispatch = func
 end
 
-local function unknown_request(session, address, msg, sz)
-	print("Unknown request :" , c.tostring(msg,sz))
+local function unknown_request(session, address, msg, sz, prototype)
+	skynet.error(string.format("Unknown request (%s): %s", prototype, c.tostring(msg,sz)))
 	error(string.format("Unknown session : %d from %x", session, address))
 end
 
@@ -373,7 +412,7 @@ local function raw_dispatch_message(prototype, msg, sz, session, source, ...)
 			session_coroutine_address[co] = source
 			suspend(co, coroutine.resume(co, session,source, p.unpack(msg,sz, ...)))
 		else
-			unknown_request(session, source, msg, sz)
+			unknown_request(session, source, msg, sz, proto[prototype])
 		end
 	end
 end
@@ -502,7 +541,7 @@ end
 local function init_service(start)
 	local ok, err = xpcall(init_template, debug.traceback, start)
 	if not ok then
-		print("init service failed:", err)
+		skynet.error("init service failed: " .. tostring(err))
 		skynet.send(".launcher","lua", "ERROR")
 		skynet.exit()
 	else
@@ -543,10 +582,22 @@ function skynet.monitor(service, query)
 	end
 	assert(monitor, "Monitor launch failed")
 	c.command("MONITOR", string.format(":%08x", monitor))
+	return monitor
 end
 
 function skynet.mqlen()
 	return tonumber(c.command "MQLEN")
+end
+
+function skynet.task(ret)
+	local t = 0
+	for session,co in pairs(session_id_coroutine) do
+		if ret then
+			ret[session] = debug.traceback(co)
+		end
+		t = t + 1
+	end
+	return t
 end
 
 -- Inject internal debug framework

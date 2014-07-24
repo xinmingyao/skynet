@@ -2,6 +2,7 @@ local driver = require "socketdriver"
 local skynet = require "skynet"
 local assert = assert
 
+local buffer_limit = -1
 local socket = {}	-- api
 local buffer_pool = {}	-- store all message buffer object
 local socket_pool = setmetatable( -- store all socket object
@@ -47,7 +48,13 @@ socket_message[1] = function(id, size, data)
 		return
 	end
 
-	local sz = driver.push(s.buffer, buffer_pool, data, size)
+	local ok , sz = pcall(driver.push, s.buffer, buffer_pool, data, size)
+	if not ok then
+		skynet.error("socket: error on ", id , sz)
+		driver.clear(s.buffer,buffer_pool)
+		driver.close(id)
+		return
+	end
 	local rr = s.read_required
 	local rrt = type(rr)
 	if rrt == "number" then
@@ -123,7 +130,7 @@ skynet.register_protocol {
 local function connect(id, func)
 	local newbuffer
 	if func == nil then
-		newbuffer = driver.buffer()
+		newbuffer = driver.buffer(buffer_limit)
 	end
 	local s = {
 		id = id,
@@ -272,7 +279,13 @@ function socket.invalid(id)
 	return socket_pool[id] == nil
 end
 
-socket.listen = assert(driver.listen)
+function socket.listen(host, port, backlog)
+	if port == nil then
+		host, port = string.match(host, "([^:]+):(.+)$")
+		port = tonumber(port)
+	end
+	return driver.listen(host, port, backlog)
+end
 
 function socket.lock(id)
 	local s = socket_pool[id]
@@ -310,6 +323,10 @@ function socket.abandon(id)
 		driver.clear(s.buffer,buffer_pool)
 	end
 	socket_pool[id] = nil
+end
+
+function socket.limit(limit)
+	buffer_limit = limit
 end
 
 return socket

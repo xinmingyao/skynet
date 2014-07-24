@@ -234,8 +234,18 @@ _dispatch_message(struct skynet_context *ctx, struct skynet_message *msg) {
 	CHECKCALLING_END(ctx)
 }
 
+void 
+skynet_context_dispatchall(struct skynet_context * ctx) {
+	// for skynet_error
+	struct skynet_message msg;
+	struct message_queue *q = ctx->queue;
+	while (!skynet_mq_pop(q,&msg)) {
+		_dispatch_message(ctx, &msg);
+	}
+}
+
 struct message_queue * 
-skynet_context_message_dispatch(struct skynet_monitor *sm, struct message_queue *q) {
+skynet_context_message_dispatch(struct skynet_monitor *sm, struct message_queue *q, int weight) {
 	if (q == NULL) {
 		q = skynet_globalmq_pop();
 		if (q==NULL)
@@ -251,18 +261,27 @@ skynet_context_message_dispatch(struct skynet_monitor *sm, struct message_queue 
 		return skynet_globalmq_pop();
 	}
 
+	int i,n=1;
 	struct skynet_message msg;
-	if (skynet_mq_pop(q,&msg)) {
-		skynet_context_release(ctx);
-		return skynet_globalmq_pop();
-	}
 
-	skynet_monitor_trigger(sm, msg.source , handle);
+	for (i=0;i<n;i++) {
+		if (skynet_mq_pop(q,&msg)) {
+			skynet_context_release(ctx);
+			return skynet_globalmq_pop();
+		} else if (i==0 && weight >= 0) {
+			n = skynet_mq_length(q);
+			n >>= weight;
+		}
 
-	if (ctx->cb == NULL) {
-		skynet_free(msg.data);
-	} else {
-		_dispatch_message(ctx, &msg);
+		skynet_monitor_trigger(sm, msg.source , handle);
+
+		if (ctx->cb == NULL) {
+			skynet_free(msg.data);
+		} else {
+			_dispatch_message(ctx, &msg);
+		}
+
+		skynet_monitor_trigger(sm, 0,0);
 	}
 
 	assert(q == ctx->queue);
@@ -274,8 +293,6 @@ skynet_context_message_dispatch(struct skynet_monitor *sm, struct message_queue 
 		q = nq;
 	} 
 	skynet_context_release(ctx);
-
-	skynet_monitor_trigger(sm, 0,0);
 
 	return q;
 }
@@ -342,11 +359,7 @@ cmd_reg(struct skynet_context * context, const char * param) {
 	} else if (param[0] == '.') {
 		return skynet_handle_namehandle(context->handle, param + 1);
 	} else {
-		assert(context->handle!=0);
-		struct remote_name *rname = skynet_malloc(sizeof(*rname));
-		copy_name(rname->name, param);
-		rname->handle = context->handle;
-		skynet_harbor_register(rname);
+		skynet_error(context, "Can't register global name %s in C", param);
 		return NULL;
 	}
 }
@@ -355,8 +368,10 @@ static const char *
 cmd_query(struct skynet_context * context, const char * param) {
 	if (param[0] == '.') {
 		uint32_t handle = skynet_handle_findname(param+1);
-		sprintf(context->result, ":%x", handle);
-		return context->result;
+		if (handle) {
+			sprintf(context->result, ":%x", handle);
+			return context->result;
+		}
 	}
 	return NULL;
 }
@@ -377,10 +392,7 @@ cmd_name(struct skynet_context * context, const char * param) {
 	if (name[0] == '.') {
 		return skynet_handle_namehandle(handle_id, name + 1);
 	} else {
-		struct remote_name *rname = skynet_malloc(sizeof(*rname));
-		copy_name(rname->name, name);
-		rname->handle = handle_id;
-		skynet_harbor_register(rname);
+		skynet_error(context, "Can't set global name %s in C", name);
 	}
 	return NULL;
 }
@@ -559,12 +571,16 @@ _filter_args(struct skynet_context * context, int type, int *session, void ** da
 		*data = msg;
 	}
 
-	assert((*sz & HANDLE_MASK) == *sz);
 	*sz |= type << HANDLE_REMOTE_SHIFT;
 }
 
 int
 skynet_send(struct skynet_context * context, uint32_t source, uint32_t destination , int type, int session, void * data, size_t sz) {
+	if ((sz & HANDLE_MASK) != sz) {
+		skynet_error(context, "The message to %x is too large (sz = %lu)", destination, sz);
+		skynet_free(data);
+		return -1;
+	}
 	_filter_args(context, type, &session, (void **)&data, &sz);
 
 	if (source == 0) {

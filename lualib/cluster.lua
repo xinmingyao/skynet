@@ -9,7 +9,15 @@ function cluster.call(node, address, ...)
 end
 
 function cluster.open(port)
-	skynet.call(clusterd, "lua", "listen", "0.0.0.0", port)
+	if type(port) == "string" then
+		skynet.call(clusterd, "lua", "listen", port)
+	else
+		skynet.call(clusterd, "lua", "listen", "0.0.0.0", port)
+	end
+end
+
+function cluster.reload()
+	skynet.call(clusterd, "lua", "reload")
 end
 
 skynet.init(function()

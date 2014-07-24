@@ -27,6 +27,7 @@ struct monitor {
 struct worker_parm {
 	struct monitor *m;
 	int id;
+	int weight;
 };
 
 #define CHECK_ABORT if (skynet_context_total()==0) break;
@@ -118,12 +119,13 @@ static void *
 _worker(void *p) {
 	struct worker_parm *wp = p;
 	int id = wp->id;
+	int weight = wp->weight;
 	struct monitor *m = wp->m;
 	struct skynet_monitor *sm = m->m[id];
 	skynet_initthread(THREAD_WORKER);
 	struct message_queue * q = NULL;
 	for (;;) {
-		q = skynet_context_message_dispatch(sm, q);
+		q = skynet_context_message_dispatch(sm, q, weight);
 		if (q == NULL) {
 			CHECK_ABORT
 			if (pthread_mutex_lock(&m->mutex) == 0) {
@@ -169,10 +171,20 @@ _start(int thread) {
 	create_thread(&pid[1], _timer, m);
 	create_thread(&pid[2], _socket, m);
 
+	static int weight[] = { 
+		-1, -1, -1, -1, 0, 0, 0, 0,
+		1, 1, 1, 1, 1, 1, 1, 1, 
+		2, 2, 2, 2, 2, 2, 2, 2, 
+		3, 3, 3, 3, 3, 3, 3, 3, };
 	struct worker_parm wp[thread];
 	for (i=0;i<thread;i++) {
 		wp[i].m = m;
 		wp[i].id = i;
+		if (i < sizeof(weight)/sizeof(weight[0])) {
+			wp[i].weight= weight[i];
+		} else {
+			wp[i].weight = 0;
+		}
 		create_thread(&pid[i+3], _worker, &wp[i]);
 	}
 
@@ -184,7 +196,7 @@ _start(int thread) {
 }
 
 static void
-bootstrap(const char * cmdline) {
+bootstrap(struct skynet_context * logger, const char * cmdline) {
 	int sz = strlen(cmdline);
 	char name[sz+1];
 	char args[sz+1];
@@ -192,6 +204,7 @@ bootstrap(const char * cmdline) {
 	struct skynet_context *ctx = skynet_context_new(name, args);
 	if (ctx == NULL) {
 		skynet_error(NULL, "Bootstrap error : %s\n", cmdline);
+		skynet_context_dispatchall(logger);
 		exit(1);
 	}
 }
@@ -210,7 +223,13 @@ skynet_start(struct skynet_config * config) {
 	skynet_timer_init();
 	skynet_socket_init();
 
-	bootstrap(config->bootstrap);
+	struct skynet_context *ctx = skynet_context_new("logger", config->logger);
+	if (ctx == NULL) {
+		fprintf(stderr, "Can't launch logger service\n");
+		exit(1);
+	}
+
+	bootstrap(ctx, config->bootstrap);
 
 	_start(config->thread);
 	skynet_socket_free();
