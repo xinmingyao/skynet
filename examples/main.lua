@@ -1,5 +1,4 @@
 local skynet = require "skynet"
-
 local max_client = 64
 
 skynet.start(function()
@@ -13,6 +12,7 @@ skynet.start(function()
 		maxclient = max_client,
 	})
 	print("Watchdog listen on ", 8888)
-
+	skynet.newservice("udp")
+	skynet.sleep(5000)
 	skynet.exit()
 end)

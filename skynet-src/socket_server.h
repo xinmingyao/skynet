@@ -15,6 +15,8 @@ struct socket_server;
 struct socket_message {
 	int id;
 	uintptr_t opaque;
+  char peer_ip[20]; //for udp
+  int peer_port; //for udp
 	int ud;	// for accept, ud is listen id ; for data, ud is size of data 
 	char * data;
 };
@@ -29,11 +31,13 @@ void socket_server_start(struct socket_server *, uintptr_t opaque, int id);
 
 // return -1 when error
 int64_t socket_server_send(struct socket_server *, int id, const void * buffer, int sz);
+int64_t socket_server_send_udp(struct socket_server *, int id, const void * buffer, int sz,char * peer_ip,int peer_port);
 void socket_server_send_lowpriority(struct socket_server *, int id, const void * buffer, int sz);
 
 // ctrl command below returns id
 int socket_server_listen(struct socket_server *, uintptr_t opaque, const char * addr, int port, int backlog);
 int socket_server_connect(struct socket_server *, uintptr_t opaque, const char * addr, int port);
+int socket_server_connect_udp(struct socket_server *, uintptr_t opaque, const char * addr, int port);
 int socket_server_bind(struct socket_server *, uintptr_t opaque, int fd);
 
 void socket_server_nodelay(struct socket_server *, int id);

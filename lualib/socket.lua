@@ -38,10 +38,19 @@ local function suspend(s)
 	end
 end
 
+function socket.receive_handle(fun)
+   socket.handle = fun
+end
 -- read skynet_socket.h for these macro
 -- SKYNET_SOCKET_TYPE_DATA = 1
-socket_message[1] = function(id, size, data)
-	local s = socket_pool[id]
+socket_message[1] = function(id, size, data,peer_ip,peer_port)
+        local s = socket_pool[id]
+	if s.udp then
+	   assert(socket.handle,"udp must have data handle")
+	   local f = socket.handle
+	   f(id,size,data,peer_ip,peer_port)
+	   return
+	end
 	if s == nil then
 		skynet.error("socket: drop package from " .. id)
 		driver.drop(data, size)
@@ -122,8 +131,8 @@ skynet.register_protocol {
 	name = "socket",
 	id = skynet.PTYPE_SOCKET,	-- PTYPE_SOCKET = 6
 	unpack = driver.unpack,
-	dispatch = function (_, _, t, n1, n2, data)
-		socket_message[t](n1,n2,data)
+	dispatch = function (_, _, t, n1, n2, data,peer_ip,peer_port)
+		socket_message[t](n1,n2,data,peer_ip,peer_port)
 	end
 }
 
@@ -150,6 +159,18 @@ end
 function socket.open(addr, port)
 	local id = driver.connect(addr,port)
 	return connect(id)
+end
+function socket.open_udp(addr, port,opts)
+	local id = driver.open_udp(addr,port)
+	if not opts then
+	   opts ={}
+	end
+	
+	local r =  connect(id)
+	local s = socket_pool[id]
+	assert(s,"socket shout not nil")
+	s.udp = true
+	return r
 end
 
 function socket.bind(os_fd)

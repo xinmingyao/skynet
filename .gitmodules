@@ -1,3 +1,22 @@
 [submodule "3rd/jemalloc"]
 	path = 3rd/jemalloc
 	url = https://github.com/jemalloc/jemalloc.git
+[submodule "3rd/luasec"]
+	path = 3rd/luasec
+	url = https://github.com/xinmingyao/luasec.git
+[submodule "3rd/luacrypto"]
+	path = 3rd/luacrypto
+	url = https://github.com/mkottman/luacrypto
+[submodule "3rd/libsrtp"]
+	path = 3rd/libsrtp
+	url = https://github.com/cisco/libsrtp
+[submodule "3rd/base64"]
+	path = 3rd/base64
+	url = https://github.com/xinmingyao/lbase64
+[submodule "3rd/lua_srtp"]	
+	path = 3rd/lua_srtp
+	url = https://github.com/xinmingyao/lua_srtp
+[submodule "3rd/lpeg"]	
+	path = 3rd/lpeg
+	url = https://github.com/lua/lpeg
+	    

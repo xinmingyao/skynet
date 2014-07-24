@@ -375,7 +375,13 @@ lunpack(lua_State *L) {
 	} else {
 		lua_pushlightuserdata(L, message->buffer);
 	}
-	return 4;
+	if(message->peer_port == 0){
+	  return 4;
+	}else{//udp
+	  lua_pushlstring(L,message->peer_ip,strlen(message->peer_ip));
+	  lua_pushinteger(L,message->peer_port);
+	  return 6;
+	}
 }
 
 static int
@@ -402,6 +408,32 @@ lconnect(lua_State *L) {
 	int id = skynet_socket_connect(ctx, host, port);
 	lua_pushinteger(L, id);
 
+	return 1;
+}
+
+static int
+lopen_udp(lua_State *L) {
+	size_t sz = 0;
+	const char * addr = luaL_checklstring(L,1,&sz);
+	char tmp[sz];
+	int port;
+	const char * host;
+	if (lua_isnoneornil(L,2)) {
+		const char * sep = strchr(addr,':');
+		if (sep == NULL) {
+			return luaL_error(L, "Connect to invalid address %s.",addr);
+		}
+		memcpy(tmp, addr, sep-addr);
+		tmp[sep-addr] = '\0';
+		host = tmp;
+		port = strtoul(sep+1,NULL,10);
+	} else {
+		host = addr;
+		port = luaL_checkinteger(L,2);
+	}
+	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
+	int id = skynet_socket_connect_udp(ctx, host, port);
+	lua_pushinteger(L, id);
 	return 1;
 }
 
@@ -443,14 +475,39 @@ get_buffer(lua_State *L, int *sz) {
 	}
 	return buffer;
 }
-
+static int 
+is_udp(lua_State *L){
+  int index;
+  if (lua_isuserdata(L,2)) {
+    index = 4;
+  }else{
+    index = 3;
+  }
+  if(lua_type(L,index)==LUA_TSTRING){
+    return index;
+  }else{
+    return 0;
+  }
+  
+}
 static int
 lsend(lua_State *L) {
 	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
 	int id = luaL_checkinteger(L, 1);
 	int sz = 0;
 	void *buffer = get_buffer(L, &sz);
-	int err = skynet_socket_send(ctx, id, buffer, sz);
+	int index = is_udp(L);
+	int err;
+	if(index >0){
+	  size_t len = 0;
+	  const char * str = luaL_checklstring(L,index,&len);
+	  int port = luaL_checkinteger(L,index+1);
+	  char * ip = skynet_malloc(len);
+	  memcpy(ip,str,len);
+	  err = skynet_socket_send_udp(ctx, id, buffer, sz,ip,port);
+	}else{
+	  err = skynet_socket_send(ctx, id, buffer, sz);
+	}
 	lua_pushboolean(L, !err);
 	return 1;
 }
@@ -510,6 +567,7 @@ luaopen_socketdriver(lua_State *L) {
 	luaL_newlib(L,l);
 	luaL_Reg l2[] = {
 		{ "connect", lconnect },
+		{ "open_udp", lopen_udp },
 		{ "close", lclose },
 		{ "listen", llisten },
 		{ "send", lsend },

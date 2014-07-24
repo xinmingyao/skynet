@@ -46,6 +46,10 @@ forward_message(int type, bool padding, struct socket_message * result) {
 	sm->type = type;
 	sm->id = result->id;
 	sm->ud = result->ud;
+	sm->peer_port = result->peer_port;
+	if(sm->peer_port !=0){//udp
+	  strcpy(sm->peer_ip,result->peer_ip);
+	}
 	if (padding) {
 		sm->buffer = NULL;
 		strcpy((char*)(sm+1), result->data);
@@ -100,6 +104,20 @@ skynet_socket_poll() {
 	}
 	return 1;
 }
+int
+skynet_socket_send_udp(struct skynet_context *ctx, int id, void *buffer, int sz,char *peer_ip,int peer_port) {
+  int64_t wsz = socket_server_send_udp(SOCKET_SERVER, id, buffer, sz,peer_ip,peer_port);
+	if (wsz < 0) {
+		skynet_free(buffer);
+		return -1;
+	} else if (wsz > 1024 * 1024) {
+		int kb4 = wsz / 1024 / 4;
+		if (kb4 % 256 == 0) {
+			skynet_error(ctx, "%d Mb bytes on socket %d need to send out", (int)(wsz / (1024 * 1024)), id);
+		}
+	}
+	return 0;
+}
 
 int
 skynet_socket_send(struct skynet_context *ctx, int id, void *buffer, int sz) {
@@ -131,6 +149,12 @@ int
 skynet_socket_connect(struct skynet_context *ctx, const char *host, int port) {
 	uint32_t source = skynet_context_handle(ctx);
 	return socket_server_connect(SOCKET_SERVER, source, host, port);
+}
+
+int 
+skynet_socket_connect_udp(struct skynet_context *ctx, const char *host, int port) {
+	uint32_t source = skynet_context_handle(ctx);
+	return socket_server_connect_udp(SOCKET_SERVER, source, host, port);
 }
 
 int 

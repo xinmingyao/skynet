@@ -34,7 +34,8 @@
 
 #define PRIORITY_HIGH 0
 #define PRIORITY_LOW 1
-
+#define STYPE_UDP SOCK_DGRAM
+#define STYPE_TCP SOCK_STREAM
 #define HASH_ID(id) (((unsigned)id) % MAX_SOCKET)
 
 struct write_buffer {
@@ -42,6 +43,8 @@ struct write_buffer {
 	char *ptr;
 	int sz;
 	void *buffer;
+  char *peer_ip; //for udp
+  int peer_port; //for udp
 };
 
 struct wb_list {
@@ -58,6 +61,9 @@ struct socket {
 	uintptr_t opaque;
 	struct wb_list high;
 	struct wb_list low;
+  short stype ;//udp:1,tcp:0
+  short is_ssl;
+  short ssl_state;
 };
 
 struct socket_server {
@@ -78,6 +84,7 @@ struct request_open {
 	int id;
 	int port;
 	uintptr_t opaque;
+  short is_udp;
 	char host[1];
 };
 
@@ -85,6 +92,8 @@ struct request_send {
 	int id;
 	int sz;
 	char * buffer;
+  char peer_ip[20]; //for udp
+  int peer_port; //for udp
 };
 
 struct request_close {
@@ -294,6 +303,7 @@ new_fd(struct socket_server *ss, int id, int fd, uintptr_t opaque, bool add) {
 	s->wb_size = 0;
 	check_wb_list(&s->high);
 	check_wb_list(&s->low);
+	s->stype = STYPE_TCP;
 	return s;
 }
 
@@ -314,9 +324,14 @@ open_socket(struct socket_server *ss, struct request_open * request, struct sock
 	sprintf(port, "%d", request->port);
 	memset( &ai_hints, 0, sizeof( ai_hints ) );
 	ai_hints.ai_family = AF_UNSPEC;
-	ai_hints.ai_socktype = SOCK_STREAM;
-	ai_hints.ai_protocol = IPPROTO_TCP;
-
+	if(request->is_udp){
+	  ai_hints.ai_socktype = SOCK_DGRAM;
+	  ai_hints.ai_protocol = IPPROTO_UDP;
+	  ai_hints.ai_flags = AI_PASSIVE;
+	}else{
+	  ai_hints.ai_socktype = SOCK_STREAM;
+	  ai_hints.ai_protocol = IPPROTO_TCP;
+	}
 	status = getaddrinfo( request->host, port, &ai_hints, &ai_list );
 	if ( status != 0 ) {
 		goto _failed;
@@ -329,7 +344,11 @@ open_socket(struct socket_server *ss, struct request_open * request, struct sock
 		}
 		socket_keepalive(sock);
 		sp_nonblocking(sock);
-		status = connect( sock, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
+		if(request->is_udp){
+		  status = bind(sock,	ai_ptr->ai_addr, ai_ptr->ai_addrlen);
+		}else{
+		  status = connect( sock, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
+		}
 		if ( status != 0 && errno != EINPROGRESS) {
 			close(sock);
 			sock = -1;
@@ -348,7 +367,9 @@ open_socket(struct socket_server *ss, struct request_open * request, struct sock
 		close(sock);
 		goto _failed;
 	}
-
+	if(request->is_udp){
+	  ns->stype = STYPE_UDP;
+	}
 	if(status == 0) {
 		ns->type = SOCKET_TYPE_CONNECTED;
 		struct sockaddr * addr = ai_ptr->ai_addr;
@@ -376,7 +397,17 @@ send_list(struct socket_server *ss, struct socket *s, struct wb_list *list, stru
 	while (list->head) {
 		struct write_buffer * tmp = list->head;
 		for (;;) {
-			int sz = write(s->fd, tmp->ptr, tmp->sz);
+			int sz ;
+			if(tmp->peer_port ==0){
+			  sz = write(s->fd, tmp->ptr, tmp->sz);
+			}else{
+			  struct sockaddr_in my_addr;
+			  memset(&my_addr, 0, sizeof(struct sockaddr_in));
+			  my_addr.sin_family = AF_INET;
+			  my_addr.sin_port = htons(tmp->peer_port);
+			  my_addr.sin_addr.s_addr=inet_addr(tmp->peer_ip);
+			  sz = sendto(s->fd,tmp->ptr, tmp->sz,0,(struct sockaddr *) &my_addr, sizeof(struct sockaddr));
+			}
 			if (sz < 0) {
 				switch(errno) {
 				case EINTR:
@@ -475,6 +506,12 @@ append_sendbuffer_(struct wb_list *s, struct request_send * request, int n) {
 	buf->ptr = request->buffer+n;
 	buf->sz = request->sz - n;
 	buf->buffer = request->buffer;
+	if(request->peer_port == 0){
+	  buf->peer_port = 0;
+	}else{
+	  buf->peer_port = request->peer_port;
+	  buf->peer_ip = request->peer_ip;//fixme strcpy?
+	}
 	buf->next = NULL;
 	if (s->head == NULL) {
 		s->head = s->tail = buf;
@@ -521,7 +558,17 @@ send_socket(struct socket_server *ss, struct request_send * request, struct sock
 	}
 	assert(s->type != SOCKET_TYPE_PLISTEN && s->type != SOCKET_TYPE_LISTEN);
 	if (send_buffer_empty(s) && s->type == SOCKET_TYPE_CONNECTED) {
-		int n = write(s->fd, request->buffer, request->sz);
+	        int n ;
+		if(request->peer_port ==0){
+		  n = write(s->fd, request->buffer, request->sz);
+		}else{
+		  struct sockaddr_in my_addr;
+		  memset(&my_addr, 0, sizeof(struct sockaddr_in));
+		  my_addr.sin_family = AF_INET;
+		  my_addr.sin_port = htons(request->peer_port);
+		  my_addr.sin_addr.s_addr=inet_addr(request->peer_ip);
+		  n = sendto(s->fd,request->buffer, request->sz,0,(struct sockaddr *) &my_addr, sizeof(struct sockaddr));
+		}
 		if (n<0) {
 			switch(errno) {
 			case EINTR:
@@ -733,8 +780,16 @@ static int
 forward_message(struct socket_server *ss, struct socket *s, struct socket_message * result) {
 	int sz = s->size;
 	char * buffer = MALLOC(sz);
-	int n = (int)read(s->fd, buffer, sz);
-	if (n<0) {
+	struct sockaddr_in addr;
+	memset(&addr, 0, sizeof(struct sockaddr_in));
+	int addr_len = sizeof(struct sockaddr_in);
+	int n;
+	if(s->stype == STYPE_TCP){
+	    n = (int)read(s->fd, buffer, sz);
+	  }else{
+	    n = (int)recvfrom(s->fd,buffer,sz,0,(struct sockaddr *)&addr ,&addr_len);
+	  }
+	  if (n<0) {
 		FREE(buffer);
 		switch(errno) {
 		case EINTR:
@@ -766,7 +821,12 @@ forward_message(struct socket_server *ss, struct socket *s, struct socket_messag
 	} else if (sz > MIN_READ_BUFFER && n*2 < sz) {
 		s->size /= 2;
 	}
-
+	  if(s->stype == STYPE_TCP){
+	    result->peer_port = 0;
+	  }else{
+	    strcpy(result->peer_ip,inet_ntoa(addr.sin_addr));
+	    result->peer_port = (unsigned)ntohs(addr.sin_port);
+	  } 
 	result->opaque = s->opaque;
 	result->id = s->id;
 	result->ud = n;
@@ -959,11 +1019,36 @@ int
 socket_server_connect(struct socket_server *ss, uintptr_t opaque, const char * addr, int port) {
 	struct request_package request;
 	int len = open_request(ss, &request, opaque, addr, port);
+	request.u.open.is_udp = false;
+	send_request(ss, &request, 'O', sizeof(request.u.open) + len);
+	return request.u.open.id;
+}
+int 
+socket_server_connect_udp(struct socket_server *ss, uintptr_t opaque, const char * addr, int port) {
+	struct request_package request;
+	int len = open_request(ss, &request, opaque, addr, port);
+	request.u.open.is_udp = true;
 	send_request(ss, &request, 'O', sizeof(request.u.open) + len);
 	return request.u.open.id;
 }
 
 // return -1 when error
+int64_t 
+socket_server_send_udp(struct socket_server *ss, int id, const void * buffer, int sz,char* peer_ip,int peer_port) {
+	struct socket * s = &ss->slot[HASH_ID(id)];
+	if (s->id != id || s->type == SOCKET_TYPE_INVALID) {
+		return -1;
+	}
+
+	struct request_package request;
+	request.u.send.id = id;
+	request.u.send.sz = sz;
+	request.u.send.buffer = (char *)buffer;
+	request.u.send.peer_port = peer_port;
+	strcpy(request.u.send.peer_ip,peer_ip);
+	send_request(ss, &request, 'D', sizeof(request.u.send));
+	return s->wb_size;
+}
 int64_t 
 socket_server_send(struct socket_server *ss, int id, const void * buffer, int sz) {
 	struct socket * s = &ss->slot[HASH_ID(id)];
@@ -975,7 +1060,7 @@ socket_server_send(struct socket_server *ss, int id, const void * buffer, int sz
 	request.u.send.id = id;
 	request.u.send.sz = sz;
 	request.u.send.buffer = (char *)buffer;
-
+	request.u.send.peer_port = 0;
 	send_request(ss, &request, 'D', sizeof(request.u.send));
 	return s->wb_size;
 }

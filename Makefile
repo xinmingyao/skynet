@@ -22,7 +22,7 @@ JEMALLOC_STATICLIB := 3rd/jemalloc/lib/libjemalloc_pic.a
 JEMALLOC_INC := 3rd/jemalloc/include/jemalloc
 
 all : jemalloc
-	
+
 .PHONY : jemalloc
 
 MALLOC_STATICLIB := $(JEMALLOC_STATICLIB)
@@ -43,12 +43,12 @@ jemalloc : $(MALLOC_STATICLIB)
 CSERVICE = snlua logger gate harbor
 LUA_CLIB = skynet socketdriver int64 bson mongo md5 netpack \
   cjson clientsocket memory profile multicast \
-  cluster
+  cluster base64 lpeg libsrtp lua_srtp ssl crypto
 
 SKYNET_SRC = skynet_main.c skynet_handle.c skynet_module.c skynet_mq.c \
   skynet_server.c skynet_start.c skynet_timer.c skynet_error.c \
   skynet_harbor.c skynet_env.c skynet_monitor.c skynet_socket.c socket_server.c \
-  malloc_hook.c skynet_daemon.c
+  malloc_hook.c skynet_daemon.c 
 
 all : \
   $(SKYNET_BUILD_PATH)/skynet \
@@ -109,7 +109,19 @@ $(LUA_CLIB_PATH)/multicast.so : lualib-src/lua-multicast.c | $(LUA_CLIB_PATH)
 
 $(LUA_CLIB_PATH)/cluster.so : lualib-src/lua-cluster.c | $(LUA_CLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src $^ -o $@ 
-
+$(LUA_CLIB_PATH)/base64.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/base64 && $(MAKE) LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/base64/base64.so $@
+$(LUA_CLIB_PATH)/lpeg.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/lpeg && $(MAKE) LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/lpeg/lpeg.so $@
+$(LUA_CLIB_PATH)/libsrtp.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/libsrtp && ./configure && $(MAKE) libsrtp.so LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/libsrtp/libsrtp.so $@
+$(LUA_CLIB_PATH)/lua_srtp.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/lua_srtp  && $(MAKE) posix  LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/lua_srtp/lua_srtp.so $@
+$(LUA_CLIB_PATH)/ssl.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/luasec  && $(MAKE) linux LUA_INCLUDE_DIR=../../$(LUA_INC) CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/luasec/src/ssl.so $@ && cp 3rd/luasec/src/ssl.lua  ./lualib/ssl.lua
+$(LUA_CLIB_PATH)/crypto.so : | $(LUA_CLIB_PATH)	
+	cd 3rd/luacrypto/ && sed -i "s/LUALIBDIR=/LUALIBDIR2/g" configure  && ./configure LUALIBDIR=$(shell pwd)/3rd/lua  LUA_LIBS=../../lua LUA_CFLAGS=../../lua && ${MAKE} CC=$(CC) CJSON_LDFLAGS="$(SHARED)" && cd ../.. && cp 3rd/luacrypto/src/.libs/crypto.so $@
+clean :
 clean :
 	rm -f $(SKYNET_BUILD_PATH)/skynet $(CSERVICE_PATH)/*.so $(LUA_CLIB_PATH)/*.so
 
